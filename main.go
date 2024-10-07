@@ -1,0 +1,25 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"strings"
+)
+
+func main() {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("Select mode: (1) Start Server (2) Scan for Servers")
+	choice, _ := reader.ReadString('\n')
+	choice = strings.TrimSpace(choice)
+
+	switch choice {
+	case "1":
+		go startUDPServer()
+	case "2":
+		// discover servers
+	default:
+		fmt.Println("Invalid choice. Please enter 1 or 2.")
+	}
+
+}
