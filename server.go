@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 )
 
 const (
@@ -66,18 +67,16 @@ func startTCPServer() {
 	}
 }
 
-// Handles TCP connection for sending a file.
-func handleTCPConnection(conn net.Conn) {
-	defer conn.Close()
-	buf := make([]byte, 1024)
-
-	n, err := conn.Read(buf)
-	if err != nil {
-		fmt.Println("Error reading from TCP connection:", err)
-		return
+func handleTCPRequest(conn net.Conn, message string) {
+	if strings.HasPrefix(message, "GETFILES") {
+		sendExistingFiles(conn)
+	} else if strings.HasPrefix(message, "REQUEST:") {
+		filename := strings.TrimPrefix(message, "REQUEST:")
+		sendFile(conn, filename)
 	}
+}
 
-	filename := string(buf[:n])
+func sendFile(conn net.Conn, filename string) {
 	fmt.Println("Client requested file:", filename)
 
 	file, err := os.Open(filename)
@@ -93,6 +92,38 @@ func handleTCPConnection(conn net.Conn) {
 		fmt.Println("Error sending file:", err)
 		return
 	}
-
 	fmt.Println("File sent successfully")
+}
+
+func sendExistingFiles(conn net.Conn) {
+	f, err := os.Open(".")
+	if err != nil {
+		fmt.Printf("unable to access directory - %v\n", err)
+	}
+	files, err := f.Readdir(0)
+	if err != nil {
+		fmt.Printf("unable to read files in directory - %v\n", err)
+	}
+	fileStr := ""
+	for _, file := range files {
+		fileStr += fmt.Sprintf("%v %v\n", file.Name(), file.IsDir())
+
+	}
+	_, err = conn.Write([]byte(fileStr))
+	if err != nil {
+		fmt.Printf("unable to send list of files via the TCP connection - %v", err)
+	}
+}
+
+// Handles TCP connection for sending a file.
+func handleTCPConnection(conn net.Conn) {
+	defer conn.Close()
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	if err != nil {
+		fmt.Println("Error reading from TCP connection:", err)
+		return
+	}
+	message := string(buf[:n])
+	handleTCPRequest(conn, message)
 }
