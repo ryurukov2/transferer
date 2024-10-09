@@ -51,25 +51,6 @@ func discover(localIP net.IP) (string, error) {
 	return "", fmt.Errorf("unable to locate server at IP %v", localIP)
 }
 
-// discoverServers loops through available IP addresses of interfaces on the host and looks for available UDP servers through each IP.
-// This is needed because on some computers with more than one interface, inactive interfaces can return 'up' flags similar to active ones.
-func discoverServers() ([]string, error) {
-	availableServers := []string{}
-	localIPs, err := getLocalIPs()
-	if err != nil {
-		return availableServers, err
-	}
-	for _, localIP := range localIPs {
-		discoveredServer, err := discover(localIP)
-		if err != nil {
-			fmt.Printf("Error discovering server on %v - %v\n", localIP, err)
-			continue
-		}
-		availableServers = append(availableServers, discoveredServer)
-	}
-	return availableServers, nil
-}
-
 // getLocalIPs returns a list of local IP addresses of all available IPs for interfaces on a host.
 // This can include ethernet, wifi or other IPs that are not loopback and are up.
 func getLocalIPs() ([]net.IP, error) {
@@ -109,16 +90,77 @@ func getLocalIPs() ([]net.IP, error) {
 	return availableIPs, nil
 }
 
-func requestFile(serverAddr, filename string) error {
+// discoverServers loops through available IP addresses of interfaces on the host and looks for available UDP servers through each IP.
+// This is needed because on some computers with more than one interface, inactive interfaces can return 'up' flags similar to active ones.
+func discoverServers() ([]string, error) {
+	availableServers := []string{}
+	localIPs, err := getLocalIPs()
+	if err != nil {
+		return availableServers, err
+	}
+	for _, localIP := range localIPs {
+		discoveredServer, err := discover(localIP)
+		if err != nil {
+			fmt.Printf("Error discovering server on %v - %v\n", localIP, err)
+			continue
+		}
+		availableServers = append(availableServers, discoveredServer)
+	}
+	return availableServers, nil
+}
+
+func openTCPConnection(serverAddr string) (net.Conn, error) {
 	conn, err := net.Dial("tcp", serverAddr)
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
+}
+
+func getExistingFiles(conn net.Conn) ([]string, error) {
+	_, err := conn.Write([]byte("GETFILES"))
+	files := []string{}
+	if err != nil {
+		return files, err
+	}
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return files, err
+	}
+	temp := string(buf[:n])
+	files = strings.Split(temp, "\n")
+	return files, nil
+}
+
+func requestFile(serverAddr, filename string) error {
+	conn, err := openTCPConnection(serverAddr)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	_, err = conn.Write([]byte(filename))
+	files, err := getExistingFiles(conn)
 	if err != nil {
 		return err
+	}
+	fmt.Println(files)
+
+	_, err = conn.Write([]byte("REQUEST:" + filename))
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return err
+	}
+	response := string(buf[:n])
+	fmt.Println(response)
+	if strings.HasPrefix(response, "ERROR:") {
+		servError := fmt.Sprintf(strings.CutPrefix(response, "ERROR:"))
+		fmt.Println(servError)
+		return fmt.Errorf("%v", servError)
 	}
 
 	file, err := os.Create("received_" + filename)
@@ -132,6 +174,7 @@ func requestFile(serverAddr, filename string) error {
 		os.Remove("received_" + filename)
 		return err
 	}
+	fmt.Println()
 
 	fmt.Println("File received successfully")
 	return nil
