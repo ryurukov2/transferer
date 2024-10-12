@@ -148,9 +148,11 @@ func stopServers() {
 	if tcpListener != nil {
 		fmt.Println("Stopping TCP server...")
 		tcpListener.Close()
+		tcpListener = nil
 	}
 	if udpConn != nil {
 		fmt.Println("Stopping UDP server...")
 		udpConn.Close()
+		udpConn = nil
 	}
 }
