@@ -141,18 +141,3 @@ func sendExistingFiles(conn net.Conn) {
 		fmt.Printf("unable to send list of files via the TCP connection - %v", err)
 	}
 }
-
-func stopServers() {
-	fmt.Println("Stopserv")
-
-	if tcpListener != nil {
-		fmt.Println("Stopping TCP server...")
-		tcpListener.Close()
-		tcpListener = nil
-	}
-	if udpConn != nil {
-		fmt.Println("Stopping UDP server...")
-		udpConn.Close()
-		udpConn = nil
-	}
-}
