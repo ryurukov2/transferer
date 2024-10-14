@@ -2,7 +2,9 @@ import { useState, useEffect } from "react";
 import logo from "./assets/images/logo-universal.png";
 import "./App.css";
 import ServerLayout from "./Server.jsx";
+import ClientLayout from "./Client.jsx";
 import { EventsEmit } from "/wailsjs/runtime/runtime.js";
+// import { reqFile } from "../wailsjs/go/main/App"
 function App() {
   const [role, setRole] = useState(null);
 
@@ -11,10 +13,11 @@ function App() {
     EventsEmit("start-server");
     console.log("serverstart");
   };
-
+  
   const handleClientClick = () => {
     setRole("client");
     EventsEmit("start-client");
+    console.log("clientstart");
   };
 
   useEffect(() => {
@@ -61,7 +64,7 @@ function App() {
       {role === "client" && (
         <div className="text-center">
           <h2 className="text-2xl">Client Mode</h2>
-          {/* Client functionality here */}
+          <ClientLayout/>
         </div>
       )}
     </div>
