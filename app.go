@@ -57,7 +57,6 @@ func (a *App) SetClientConnection(connAddress string) {
 	if err != nil {
 		fmt.Println(err)
 	}
-	wg.Add(1)
 	clientTCPCon = conn
 }
 func (a *App) GetFiles() []fileData {
