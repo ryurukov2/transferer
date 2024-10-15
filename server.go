@@ -132,7 +132,7 @@ func sendExistingFiles(conn net.Conn) {
 	}
 	fileStr := ""
 	for _, file := range files {
-		fileStr += fmt.Sprintf("%v %v,,", file.Name(), file.IsDir())
+		fileStr += fmt.Sprintf("%v//%v,,", file.Name(), file.IsDir())
 
 	}
 	fileStr += "\n"

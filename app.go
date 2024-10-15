@@ -77,7 +77,7 @@ func startServer() {
 }
 func startClient() {
 	fmt.Println("client-start")
-	clientLogic()
+	clientInit()
 }
 
 func stopServers() {
