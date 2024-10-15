@@ -60,11 +60,11 @@ func (a *App) SetClientConnection(connAddress string) {
 	wg.Add(1)
 	clientTCPCon = conn
 }
-func (a *App) GetFiles() []string {
+func (a *App) GetFiles() []fileData {
 	files, err := getExistingFiles()
 	if err != nil {
 		fmt.Println(err)
-		return []string{}
+		return []fileData{}
 	}
 	return files
 
