@@ -62,10 +62,8 @@ function App() {
       )}
 
       {role === "client" && (
-        <div className="text-center">
-          <h2 className="text-2xl">Client Mode</h2>
+
           <ClientLayout/>
-        </div>
       )}
     </div>
   );
