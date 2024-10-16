@@ -30,8 +30,6 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) shutdown(ctx context.Context) {
 	stopServers()
-	wg.Wait()
-	fmt.Println("asd")
 }
 
 func (a *App) ReqFile(filename string) string {
@@ -51,13 +49,15 @@ func (a *App) DiscServers() []string {
 	}
 	return servers
 }
-func (a *App) SetClientConnection(connAddress string) {
+func (a *App) SetClientConnection(connAddress string) bool {
 	serverAddress = connAddress
 	conn, err := openTCPConnection(serverAddress)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Printf("Error starting client connection, %v\n", err)
+		return false
 	}
 	clientTCPCon = conn
+	return true
 }
 func (a *App) GetFiles() []fileData {
 	files, err := getExistingFiles()
@@ -70,7 +70,6 @@ func (a *App) GetFiles() []fileData {
 }
 
 func startServer() {
-	wg.Add(1)
 	go startUDPServer()
 	startTCPServer()
 }
@@ -80,8 +79,6 @@ func startClient() {
 }
 
 func stopServers() {
-	fmt.Println("Stopserv")
-
 	if tcpListener != nil {
 		fmt.Println("Stopping TCP server...")
 		tcpListener.Close()
@@ -96,5 +93,8 @@ func stopServers() {
 		fmt.Println("Closing client TCP connection...")
 		clientTCPCon.Close()
 		clientTCPCon = nil
+	}
+	if serverAddress != "" {
+		serverAddress = ""
 	}
 }

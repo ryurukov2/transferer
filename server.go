@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"strings"
-	"sync"
 )
 
 const (
@@ -16,7 +15,6 @@ const (
 
 var udpConn *net.UDPConn
 var tcpListener net.Listener
-var wg sync.WaitGroup
 
 // Starts a UDP server at port 9999 on the local machine
 func startUDPServer() {
