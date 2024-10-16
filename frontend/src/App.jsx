@@ -13,7 +13,7 @@ function App() {
     EventsEmit("start-server");
     console.log("serverstart");
   };
-  
+
   const handleClientClick = () => {
     setRole("client");
     EventsEmit("start-client");
@@ -22,13 +22,13 @@ function App() {
 
   useEffect(() => {
     const handleBeforeUnload = () => {
-      EventsEmit('stop-servers');
+      EventsEmit("stop-servers");
     };
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener("beforeunload", handleBeforeUnload);
 
     return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
     };
   }, []);
 
@@ -54,17 +54,9 @@ function App() {
         </div>
       )}
 
-      {role === "server" && (
-        <div className="text-center">
-          <h2 className="text-2xl">Server Mode</h2>
-            <ServerLayout/>
-        </div>
-      )}
+      {role === "server" && <ServerLayout />}
 
-      {role === "client" && (
-
-          <ClientLayout/>
-      )}
+      {role === "client" && <ClientLayout />}
     </div>
   );
 }

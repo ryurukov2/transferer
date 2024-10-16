@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import ServerList from "./ServerList.jsx";
 import FileList from "./FileList.jsx";
+import HomeButton from "./HomeButton.jsx";
 import {
   ReqFile,
   DiscServers,
@@ -13,7 +14,7 @@ function ClientLayout() {
   const [serverAvailable, setServerAvailable] = useState(false);
   const [selectedServer, setSelectedServer] = useState(null);
   const [files, setFiles] = useState([]);
-  const [filesAvailable, setFilesAvailable] = useState(false);
+  const [connAvailable, setConnAvailable] = useState(false);
   const [result, setResult] = useState("");
   const [selectedFile, setSelectedFile] = useState(null);
   const reqButtonDisableStatus = selectedFile == null;
@@ -29,7 +30,6 @@ function ClientLayout() {
       console.log(availableFiles);
       if (availableFiles.length != 0) {
         setFiles(availableFiles);
-        setFilesAvailable(true);
       }
     }
   };
@@ -41,9 +41,7 @@ function ClientLayout() {
       setServerAvailable(true);
 
       if (numberOfServers == 1) {
-        console.log("clientconn");
         setSelectedServer(availableServers[0]);
-        SetClientConnection(availableServers[0]);
       }
     }
   };
@@ -51,11 +49,20 @@ function ClientLayout() {
     serverScan();
   }, []);
   useEffect(() => {
-    fileScan();
+    if(selectedServer){
+      SetClientConnection(selectedServer).then(setConnAvailable);
+    }
   }, [selectedServer]);
+  useEffect(() => {
+    fileScan()
+  }, [connAvailable])
   return (
-    <div className="flex flex-col h-full">
-      <h2 className="text-2xl p-4">Client Mode</h2>
+    <div className="flex flex-col h-full px-8 w-full">
+      <div className="items-center justify-between flex flex-row">
+        <HomeButton/>
+        <h2 className="text-2xl p-4">Client Mode</h2>
+        <div></div>
+      </div>
       {!serverAvailable ? (
         <div className="flex flex-col items-start">
           <div className="text-gray-600 mb-4">
@@ -73,8 +80,10 @@ function ClientLayout() {
       ) : (
         <div className="flex flex-row gap-4 h-5/6">
           <div className="w-1/4">
-            <div className="bg-blue-800 p-4 rounded-lg">
-              <ServerList servers={servers} />
+            <div className="bg-blue-800 p-4 rounded-lg overflow-clip">
+              <ServerList servers={servers}
+              selectedServer={selectedServer}
+              setSelectedServer={setSelectedServer} />
             </div>
           </div>
 

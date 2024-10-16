@@ -16,11 +16,10 @@ function FileList({ files, selectedFile, setSelectedFile }) {
               key={index}
               onClick={() => handleFileClick(file)}
               style={{
-                cursor: 'pointer',
                 backgroundColor: selectedFile === file ? 'lightblue' : 'transparent',
                 border: selectedFile === file ? '1px solid blue' : '1px solid transparent',
               }}
-              className="flex items-center"
+              className="flex items-center cursor-pointer"
             >
               {/* Display the appropriate image depending on whether it's a file or folder */}
               <img
