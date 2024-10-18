@@ -59,13 +59,28 @@ func (a *App) SetClientConnection(connAddress string) bool {
 	clientTCPCon = conn
 	return true
 }
-func (a *App) GetFiles() []fileData {
+func (a *App) GetFilesFromClient() []fileData {
 	files, err := getExistingFiles()
 	if err != nil {
 		fmt.Println(err)
 		return []fileData{}
 	}
 	return files
+}
+
+func (a *App) GetFilesFromServer(dir string) []fileData {
+	filesObj := []fileData{}
+	fileStr, err := getFiles(dir)
+	if err != nil {
+		fmt.Printf("error getting files - %v\n", err)
+		return filesObj
+	}
+	filesObj, err = parseFileStr(fileStr)
+	if err != nil {
+		fmt.Printf("error parsing files string to file data - %v\n", err)
+		return filesObj
+	}
+	return filesObj
 
 }
 

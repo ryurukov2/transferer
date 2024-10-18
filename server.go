@@ -120,22 +120,29 @@ func sendFile(conn net.Conn, filename string) {
 }
 
 func sendExistingFiles(conn net.Conn) {
-	f, err := os.Open(".")
+	dir := "."
+	fileStr, err := getFiles(dir)
 	if err != nil {
 		fmt.Printf("unable to access directory - %v\n", err)
+		return
 	}
-	files, err := f.Readdir(0)
-	if err != nil {
-		fmt.Printf("unable to read files in directory - %v\n", err)
-	}
-	fileStr := ""
-	for _, file := range files {
-		fileStr += fmt.Sprintf("%v//%v,,", file.Name(), file.IsDir())
-
-	}
-	fileStr += "\n"
 	_, err = conn.Write([]byte(fileStr))
 	if err != nil {
 		fmt.Printf("unable to send list of files via the TCP connection - %v", err)
 	}
+}
+
+// Returns a string with all the files in a specified directory, deliminated by two commas
+// (this is because commas are disallowed characters for file names in both windows and linux)
+func getFiles(dir string) (string, error) {
+	f, err := os.Open(dir)
+	if err != nil {
+		return "", err
+	}
+	fileStr, err := readFilesToStr(f)
+	if err != nil {
+		return "", err
+	}
+	fileStr += "\n"
+	return fileStr, nil
 }
