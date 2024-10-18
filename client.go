@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -150,20 +149,9 @@ func getExistingFiles() ([]fileData, error) {
 	if err != nil {
 		return filesObj, err
 	}
-	// temp := string(buf[:n])
-	files := strings.Split(temp, ",,")
-	for _, file := range files {
-		if file == "\n" {
-			break
-		}
-		fileAttrs := strings.Split(file, "//")
-		fileIsFolder, err := strconv.ParseBool(fileAttrs[1])
-		if err != nil {
-			return filesObj, fmt.Errorf("file parsing error %v", err)
-		}
-		tmpObj := fileData{Name: fileAttrs[0],
-			IsFolder: bool(fileIsFolder)}
-		filesObj = append(filesObj, tmpObj)
+	filesObj, err = parseFileStr(temp)
+	if err != nil {
+		return filesObj, err
 	}
 	return filesObj, nil
 }
@@ -211,7 +199,7 @@ func readData(clientTCPCon net.Conn) (string, error) {
 
 	for {
 		// Read chunks of data (up to 1024 bytes at a time)
-		chunk, err := reader.ReadString('\n') // Assuming '\n' as the delimiter
+		chunk, err := reader.ReadString('\n')
 		if err != nil {
 			return "", err
 		}
