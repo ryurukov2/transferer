@@ -4,7 +4,6 @@ import "./App.css";
 import ServerLayout from "./Server.jsx";
 import ClientLayout from "./Client.jsx";
 import { EventsEmit } from "/wailsjs/runtime/runtime.js";
-// import { reqFile } from "../wailsjs/go/main/App"
 function App() {
   const [role, setRole] = useState(null);
 

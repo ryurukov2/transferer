@@ -5,7 +5,7 @@ import HomeButton from "./HomeButton.jsx";
 import {
   ReqFile,
   DiscServers,
-  GetFiles,
+  GetFilesFromClient,
   SetClientConnection,
 } from "../wailsjs/go/main/App.js";
 function ClientLayout() {
@@ -26,7 +26,7 @@ function ClientLayout() {
   };
   const fileScan = async () => {
     if (selectedServer != null) {
-      const availableFiles = await GetFiles();
+      const availableFiles = await GetFilesFromClient();
       console.log(availableFiles);
       if (availableFiles.length != 0) {
         setFiles(availableFiles);

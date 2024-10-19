@@ -6,12 +6,24 @@ export function DiscServers() {
   return window['go']['main']['App']['DiscServers']();
 }
 
-export function GetFiles() {
-  return window['go']['main']['App']['GetFiles']();
+export function GetCurrentServerDir() {
+  return window['go']['main']['App']['GetCurrentServerDir']();
+}
+
+export function GetFilesFromClient() {
+  return window['go']['main']['App']['GetFilesFromClient']();
+}
+
+export function GetFilesFromServer(arg1) {
+  return window['go']['main']['App']['GetFilesFromServer'](arg1);
 }
 
 export function ReqFile(arg1) {
   return window['go']['main']['App']['ReqFile'](arg1);
+}
+
+export function SelectFolder() {
+  return window['go']['main']['App']['SelectFolder']();
 }
 
 export function SetClientConnection(arg1) {

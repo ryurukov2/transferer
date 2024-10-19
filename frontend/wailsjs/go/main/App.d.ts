@@ -4,8 +4,14 @@ import {main} from '../models';
 
 export function DiscServers():Promise<Array<string>>;
 
-export function GetFiles():Promise<Array<main.fileData>>;
+export function GetCurrentServerDir():Promise<string>;
+
+export function GetFilesFromClient():Promise<Array<main.fileData>>;
+
+export function GetFilesFromServer(arg1:string):Promise<Array<main.fileData>>;
 
 export function ReqFile(arg1:string):Promise<string>;
+
+export function SelectFolder():Promise<string>;
 
 export function SetClientConnection(arg1:string):Promise<boolean>;

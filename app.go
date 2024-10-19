@@ -84,12 +84,25 @@ func (a *App) GetFilesFromServer(dir string) []fileData {
 
 }
 
+func (a *App) GetCurrentServerDir() string {
+	return serverDir
+}
+func (a *App) SelectFolder() (string, error) {
+	folderPath, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select a folder to share",
+	})
+	if err != nil {
+		return "", err
+	}
+	setServerDir(folderPath)
+	return folderPath, nil
+}
+
 func startServer() {
 	go startUDPServer()
 	startTCPServer()
 }
 func startClient() {
-	fmt.Println("client-start")
 	clientInit()
 }
 

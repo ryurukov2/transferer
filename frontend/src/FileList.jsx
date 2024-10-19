@@ -21,7 +21,6 @@ function FileList({ files, selectedFile, setSelectedFile }) {
               }}
               className="flex items-center cursor-pointer"
             >
-              {/* Display the appropriate image depending on whether it's a file or folder */}
               <img
                 src={file.isFolder ? folderImage : fileImage}
                 alt={file.isFolder ? 'Folder' : 'File'}

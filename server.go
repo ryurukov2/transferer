@@ -15,6 +15,7 @@ const (
 
 var udpConn *net.UDPConn
 var tcpListener net.Listener
+var serverDir string = "."
 
 // Starts a UDP server at port 9999 on the local machine
 func startUDPServer() {
@@ -120,8 +121,7 @@ func sendFile(conn net.Conn, filename string) {
 }
 
 func sendExistingFiles(conn net.Conn) {
-	dir := "."
-	fileStr, err := getFiles(dir)
+	fileStr, err := getFiles(serverDir)
 	if err != nil {
 		fmt.Printf("unable to access directory - %v\n", err)
 		return
@@ -145,4 +145,8 @@ func getFiles(dir string) (string, error) {
 	}
 	fileStr += "\n"
 	return fileStr, nil
+}
+
+func setServerDir(dir string) {
+	serverDir = dir
 }
