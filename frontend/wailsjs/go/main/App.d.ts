@@ -10,6 +10,8 @@ export function GetFilesFromClient():Promise<Array<main.fileData>>;
 
 export function GetFilesFromServer(arg1:string):Promise<Array<main.fileData>>;
 
+export function GetServerDirectory():Promise<string>;
+
 export function ReqFile(arg1:string):Promise<string>;
 
 export function SelectFolder():Promise<string>;

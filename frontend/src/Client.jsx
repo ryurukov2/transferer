@@ -7,10 +7,11 @@ import {
   DiscServers,
   GetFilesFromClient,
   SetClientConnection,
+  GetServerDirectory,
 } from "../wailsjs/go/main/App.js";
 function ClientLayout() {
   const [servers, setServers] = useState([]);
-
+  const [fileDirectory, setFileDirectory] = useState("")
   const [serverAvailable, setServerAvailable] = useState(false);
   const [selectedServer, setSelectedServer] = useState(null);
   const [files, setFiles] = useState([]);
@@ -24,6 +25,13 @@ function ClientLayout() {
       ReqFile(selectedFile.name).then(updateResult);
     }
   };
+  const serverDirScan = async () => {
+    if (selectedServer != null){
+      const fileDir = await GetServerDirectory();
+      console.log(fileDir);
+      setFileDirectory(fileDir);
+    }
+  }
   const fileScan = async () => {
     if (selectedServer != null) {
       const availableFiles = await GetFilesFromClient();
@@ -54,6 +62,7 @@ function ClientLayout() {
     }
   }, [selectedServer]);
   useEffect(() => {
+    serverDirScan()
     fileScan()
   }, [connAvailable])
   return (
@@ -89,6 +98,7 @@ function ClientLayout() {
 
           <div className="w-3/4 flex flex-col h-full">
             <div className="bg-grey-400 p-4 rounded-lg flex-1 overflow-auto">
+              <div><strong>File Directory: </strong>{fileDirectory}</div>
               <FileList
                 files={files}
                 selectedFile={selectedFile}

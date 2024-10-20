@@ -18,6 +18,10 @@ export function GetFilesFromServer(arg1) {
   return window['go']['main']['App']['GetFilesFromServer'](arg1);
 }
 
+export function GetServerDirectory() {
+  return window['go']['main']['App']['GetServerDirectory']();
+}
+
 export function ReqFile(arg1) {
   return window['go']['main']['App']['ReqFile'](arg1);
 }
