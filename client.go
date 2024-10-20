@@ -136,6 +136,24 @@ func openTCPConnection(serverAddr string) (net.Conn, error) {
 	return conn, nil
 }
 
+func getServerDir() (string, error) {
+	if clientTCPCon == nil {
+		return "", fmt.Errorf("unable to get existing files - connection is not open, check TCP connection")
+	}
+	_, err := clientTCPCon.Write([]byte("GETDIR"))
+	if err != nil {
+		return "", err
+	}
+	resp, err := readData(clientTCPCon)
+	if err != nil {
+		return "", err
+	}
+
+	resp = strings.TrimPrefix(resp, "DIR:")
+
+	return resp, nil
+}
+
 func getExistingFiles() ([]fileData, error) {
 	filesObj := []fileData{}
 	if clientTCPCon == nil {
@@ -198,14 +216,12 @@ func readData(clientTCPCon net.Conn) (string, error) {
 	var result string
 
 	for {
-		// Read chunks of data (up to 1024 bytes at a time)
 		chunk, err := reader.ReadString('\n')
 		if err != nil {
 			return "", err
 		}
 		result += chunk
 
-		// Check if we reached the delimiter, indicating end of data
 		if len(chunk) > 0 && chunk[len(chunk)-1] == '\n' {
 			break
 		}

@@ -93,14 +93,20 @@ func handleTCPConnection(conn net.Conn) {
 }
 
 func handleTCPRequest(conn net.Conn, message string) {
-	if strings.HasPrefix(message, "GETFILES") {
+	if strings.HasPrefix(message, "GETDIR") {
+		sendFileDir(conn)
+	} else if strings.HasPrefix(message, "GETFILES") {
 		sendExistingFiles(conn)
 	} else if strings.HasPrefix(message, "REQUEST:") {
 		filename := strings.TrimPrefix(message, "REQUEST:")
 		sendFile(conn, filename)
 	}
 }
-
+func sendFileDir(conn net.Conn) {
+	fmt.Println("Sending current directory - ")
+	dirStr := fmt.Sprintf("DIR:%v\n", serverDir)
+	conn.Write([]byte(dirStr))
+}
 func sendFile(conn net.Conn, filename string) {
 	fmt.Println("Client requested file:", filename)
 

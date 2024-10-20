@@ -59,6 +59,16 @@ func (a *App) SetClientConnection(connAddress string) bool {
 	clientTCPCon = conn
 	return true
 }
+
+func (a *App) GetServerDirectory() string {
+	servDir, err := getServerDir()
+	if err != nil {
+		fmt.Println(err)
+		return ""
+	}
+	return servDir
+}
+
 func (a *App) GetFilesFromClient() []fileData {
 	files, err := getExistingFiles()
 	if err != nil {
