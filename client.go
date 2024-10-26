@@ -140,7 +140,8 @@ func getServerDir() (string, error) {
 	if clientTCPCon == nil {
 		return "", fmt.Errorf("unable to get existing files - connection is not open, check TCP connection")
 	}
-	_, err := clientTCPCon.Write([]byte("GETDIR"))
+	message := "GETDIR" + messageDelim
+	_, err := clientTCPCon.Write([]byte(message))
 	if err != nil {
 		return "", err
 	}
@@ -159,7 +160,8 @@ func getExistingFiles() ([]fileData, error) {
 	if clientTCPCon == nil {
 		return filesObj, fmt.Errorf("unable to get existing files - connection is not open, check TCP connection")
 	}
-	_, err := clientTCPCon.Write([]byte("GETFILES"))
+	message := "GETFILES" + messageDelim
+	_, err := clientTCPCon.Write([]byte(message))
 	if err != nil {
 		return filesObj, err
 	}
@@ -178,7 +180,8 @@ func requestFile(filename string) error {
 	if clientTCPCon == nil {
 		return fmt.Errorf("unable to request file - connection is not open, check TCP connection")
 	}
-	_, err := clientTCPCon.Write([]byte("REQUEST:" + filename))
+	message := "REQUEST:" + filename + messageDelim
+	_, err := clientTCPCon.Write([]byte(message))
 	if err != nil {
 		return err
 	}

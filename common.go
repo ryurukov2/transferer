@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+var messageDelim string = "\r\n"
+
 // reads files from an open directory and formats them to a string, deliminated by two commas.
 // Returns "filename//isDir" for all files.
 func readFilesToStr(f *os.File) (string, error) {

@@ -77,6 +77,7 @@ func startTCPServer() {
 // Handles TCP connection for sending a file.
 func handleTCPConnection(conn net.Conn) {
 	defer conn.Close()
+	var buffer string
 	for {
 
 		buf := make([]byte, 1024)
@@ -86,9 +87,21 @@ func handleTCPConnection(conn net.Conn) {
 			conn.Close()
 			return
 		}
-		message := string(buf[:n])
-		fmt.Println(message)
-		handleTCPRequest(conn, message)
+		buffer += string(buf[:n])
+		fmt.Println(buffer)
+		for {
+			idx := strings.Index(buffer, "\r\n")
+			fmt.Println(idx)
+			if idx == -1 {
+				break
+			}
+
+			message := buffer[:idx]
+			buffer = buffer[idx+2:]
+
+			fmt.Println("Received message:", message)
+			handleTCPRequest(conn, message)
+		}
 	}
 }
 
