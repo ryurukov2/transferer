@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -22,6 +23,7 @@ type fileData struct {
 
 var clientTCPCon net.Conn
 var serverAddress string
+var receivedFilesDir string
 
 func clientInit() {
 	serverAddrs, err := discoverServers()
@@ -31,6 +33,38 @@ func clientInit() {
 		return
 	}
 	fmt.Println("Discovered servers at:", serverAddrs)
+
+	err = setReceivedFilesDir("received_files")
+	if err != nil {
+		fmt.Println("Failed to set received files directory. Files will be saved in the executable's directory.", err)
+		return
+	}
+}
+
+func setReceivedFilesDir(newDir string) error {
+
+	stat, err := os.Stat(newDir)
+	// 3. file/dir doesn't exist
+	if err != nil && os.IsNotExist(err) {
+		err := os.Mkdir(newDir, 0777)
+		if err != nil {
+			return err
+		}
+		receivedFilesDir = newDir + "/"
+		return nil
+	}
+	// 2. file exists but is not dir
+	if err == nil && !stat.IsDir() {
+		newDir := newDir + "(1)"
+		setReceivedFilesDir(newDir)
+	}
+	// 4. permission error
+	if stat.IsDir() && os.IsPermission(err) {
+		newDir := newDir + "(1)"
+		setReceivedFilesDir(newDir)
+	}
+
+	return nil
 }
 
 // discover() returns a string with an IP:PORT format of an active UDP server if one is found
@@ -176,6 +210,14 @@ func getExistingFiles() ([]fileData, error) {
 	return filesObj, nil
 }
 
+func checkIfFilePathExists(filePath string) bool {
+	_, err := os.Stat(filePath)
+	if err != nil {
+		return !os.IsNotExist(err)
+	}
+	return true
+}
+
 func requestFile(filename string) error {
 	if clientTCPCon == nil {
 		return fmt.Errorf("unable to request file - connection is not open, check TCP connection")
@@ -196,8 +238,12 @@ func requestFile(filename string) error {
 		fmt.Println(servError)
 		return fmt.Errorf("%v", servError)
 	}
-
-	file, err := os.Create("received_" + filename)
+	filePath := filepath.Join(receivedFilesDir + filename)
+	for checkIfFilePathExists(filePath) {
+		filePath = filePath + "(1)"
+	}
+	fmt.Println(filePath)
+	file, err := os.Create(filePath)
 	if err != nil {
 		return err
 	}
