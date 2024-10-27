@@ -14,6 +14,8 @@ export function GetServerDirectory():Promise<string>;
 
 export function ReqFile(arg1:string):Promise<string>;
 
-export function SelectFolder():Promise<string>;
+export function SelectClientSaveFolder():Promise<string>;
+
+export function SelectServerFolder():Promise<string>;
 
 export function SetClientConnection(arg1:string):Promise<boolean>;

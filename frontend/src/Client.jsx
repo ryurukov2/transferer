@@ -8,6 +8,7 @@ import {
   GetFilesFromClient,
   SetClientConnection,
   GetServerDirectory,
+  SelectClientSaveFolder
 } from "../wailsjs/go/main/App.js";
 function ClientLayout() {
   const [servers, setServers] = useState([]);
@@ -53,6 +54,15 @@ function ClientLayout() {
       }
     }
   };
+
+  const handleFolderSelect = async () => {
+    try {
+      const path = await SelectClientSaveFolder();
+      console.log("Selected Folder Path:", path);
+    } catch (error) {
+      console.error("Failed to select folder:", error);
+    }
+  };
   useEffect(() => {
     serverScan();
   }, []);
@@ -70,7 +80,10 @@ function ClientLayout() {
       <div className="items-center justify-between flex flex-row">
         <HomeButton/>
         <h2 className="text-2xl p-4">Client Mode</h2>
-        <div></div>
+        <div>
+          <button className="cursor-pointer btn btn-primary"
+          onClick={handleFolderSelect}>Change save folder</button>
+        </div>
       </div>
       {!serverAvailable ? (
         <div className="flex flex-col items-start">

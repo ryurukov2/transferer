@@ -97,10 +97,8 @@ func (a *App) GetFilesFromServer(dir string) []fileData {
 func (a *App) GetCurrentServerDir() string {
 	return serverDir
 }
-func (a *App) SelectFolder() (string, error) {
-	folderPath, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select a folder to share",
-	})
+func (a *App) SelectServerFolder() (string, error) {
+	folderPath, err := selectFolder(a, "Select a folder to share")
 	if err != nil {
 		return "", err
 	}
@@ -108,6 +106,16 @@ func (a *App) SelectFolder() (string, error) {
 	return folderPath, nil
 }
 
+func (a *App) SelectClientSaveFolder() (string, error) {
+	folderPath, err := selectFolder(a, "Select a folder to save files to")
+	if err != nil {
+		return "", err
+	}
+	fmt.Println(folderPath)
+	setReceivedFilesDir(folderPath)
+
+	return folderPath, nil
+}
 func startServer() {
 	serverInit()
 }

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 var messageDelim string = "\r\n"
@@ -81,4 +83,15 @@ func writeLog(filename string, logdata string) {
 
 	logger := log.New(f, "", log.LstdFlags)
 	logger.Println(logdata)
+}
+
+func selectFolder(a *App, prompt string) (string, error) {
+	folderPath, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: prompt,
+	})
+	if err != nil {
+		return "", err
+	}
+	return folderPath, nil
+
 }

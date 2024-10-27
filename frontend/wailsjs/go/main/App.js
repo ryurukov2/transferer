@@ -26,8 +26,12 @@ export function ReqFile(arg1) {
   return window['go']['main']['App']['ReqFile'](arg1);
 }
 
-export function SelectFolder() {
-  return window['go']['main']['App']['SelectFolder']();
+export function SelectClientSaveFolder() {
+  return window['go']['main']['App']['SelectClientSaveFolder']();
+}
+
+export function SelectServerFolder() {
+  return window['go']['main']['App']['SelectServerFolder']();
 }
 
 export function SetClientConnection(arg1) {

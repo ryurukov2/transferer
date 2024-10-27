@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -63,7 +64,7 @@ func setReceivedFilesDir(newDir string) error {
 		newDir := newDir + "(1)"
 		setReceivedFilesDir(newDir)
 	}
-
+	receivedFilesDir = newDir + "/"
 	return nil
 }
 
@@ -82,7 +83,7 @@ func discover(localIP net.IP) (string, error) {
 		IP:   net.IPv4(192, 168, 1, 255),
 		Port: 9999,
 	}
-	conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	conn.SetWriteDeadline(time.Now().Add(1 * time.Second))
 	_, err = conn.WriteToUDP([]byte(discoveryMessage), &broadcastAddr)
 	if err != nil {
 		return "", err
@@ -179,10 +180,13 @@ func getServerDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	fmt.Println("Sent GETDIR message")
 	resp, err := readData(clientTCPCon)
 	if err != nil {
 		return "", err
 	}
+	fmt.Println("Received GETDIR response")
+	fmt.Println(resp)
 
 	resp = strings.TrimPrefix(resp, "DIR:")
 
@@ -199,10 +203,13 @@ func getExistingFiles() ([]fileData, error) {
 	if err != nil {
 		return filesObj, err
 	}
+	fmt.Println("Sent GETFILES message")
 	temp, err := readData(clientTCPCon)
 	if err != nil {
 		return filesObj, err
 	}
+	fmt.Println("Received GETFILES response")
+	fmt.Println("Files: ", temp)
 	filesObj, err = parseFileStr(temp)
 	if err != nil {
 		return filesObj, err
@@ -227,37 +234,48 @@ func requestFile(filename string) error {
 	if err != nil {
 		return err
 	}
-	buf := make([]byte, 1024)
-	n, err := clientTCPCon.Read(buf)
+	reader := bufio.NewReader(clientTCPCon)
+	response, err := reader.ReadString('\n')
 	if err != nil {
 		return err
 	}
-	response := string(buf[:n])
+	response = strings.TrimSpace(response)
+	fmt.Println(response)
 	if strings.HasPrefix(response, "ERROR:") {
-		servError := fmt.Sprintf(strings.CutPrefix(response, "ERROR:"))
+		servError := strings.TrimPrefix(response, "ERROR:")
 		fmt.Println(servError)
 		return fmt.Errorf("%v", servError)
-	}
-	filePath := filepath.Join(receivedFilesDir + filename)
-	for checkIfFilePathExists(filePath) {
-		filePath = filePath + "(1)"
-	}
-	fmt.Println(filePath)
-	file, err := os.Create(filePath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	file.Write(buf[:n])
-	_, err = io.Copy(file, clientTCPCon)
-	if err != nil {
-		os.Remove("received_" + filename)
-		return err
-	}
-	fmt.Println()
+	} else if strings.HasPrefix(response, "SIZE:") {
+		sizeStr := strings.TrimPrefix(response, "SIZE:")
+		fileSize, err := strconv.ParseInt(sizeStr, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid file size received: %v", err)
+		}
 
-	fmt.Println("File received successfully")
-	return nil
+		filePath := filepath.Join(receivedFilesDir, filename)
+		for checkIfFilePathExists(filePath) {
+			filePath = filePath + "(1)"
+		}
+		fmt.Println("Saving file to:", filePath)
+		file, err := os.Create(filePath)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		nCopied, err := io.CopyN(file, clientTCPCon, fileSize)
+		if err != nil {
+			return err
+		}
+		if nCopied != fileSize {
+			return fmt.Errorf("expected to copy %d bytes, but copied %d", fileSize, nCopied)
+		}
+
+		fmt.Println("File received successfully")
+		return nil
+	} else {
+		return fmt.Errorf("unexpected response from server: %s", response)
+	}
 }
 
 func readData(clientTCPCon net.Conn) (string, error) {
