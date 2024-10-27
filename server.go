@@ -5,8 +5,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -18,15 +16,6 @@ const (
 var udpConn *net.UDPConn
 var tcpListener net.Listener
 var serverDir string = "."
-
-func serverInit() {
-	go startUDPServer()
-	startTCPServer()
-	err := setLogDir()
-	if err != nil {
-		fmt.Println("Error setting log directory, logs will not be saved - ", err)
-	}
-}
 
 // Starts a UDP server at port 9999 on the local machine
 func startUDPServer() {
@@ -99,7 +88,6 @@ func handleTCPConnection(conn net.Conn) {
 			return
 		}
 		buffer += string(buf[:n])
-		go writeLog("requestMessages.log", buffer)
 		fmt.Println(buffer)
 		for {
 			idx := strings.Index(buffer, "\r\n")
@@ -134,22 +122,15 @@ func sendFileDir(conn net.Conn) {
 }
 func sendFile(conn net.Conn, filename string) {
 	fmt.Println("Client requested file:", filename)
-	filePath := filepath.Join(serverDir, "/", filename)
-	file, err := os.Open(filePath)
+
+	file, err := os.Open(filename)
 	if err != nil {
 		fmt.Println("Error opening file:", err)
 		conn.Write([]byte("ERROR: File not found"))
 		return
 	}
 	defer file.Close()
-	fStat, err := file.Stat()
-	if err != nil {
-		fmt.Println("Error getting file data:", err)
-		conn.Write([]byte("ERROR: Error getting file data"))
-		return
-	}
-	fileSize := strconv.FormatInt(fStat.Size(), 10)
-	conn.Write([]byte("SIZE:" + fileSize + "\n"))
+
 	_, err = io.Copy(conn, file)
 	if err != nil {
 		fmt.Println("Error sending file:", err)

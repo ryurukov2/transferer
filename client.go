@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -64,7 +63,7 @@ func setReceivedFilesDir(newDir string) error {
 		newDir := newDir + "(1)"
 		setReceivedFilesDir(newDir)
 	}
-	receivedFilesDir = newDir + "/"
+
 	return nil
 }
 
@@ -228,48 +227,37 @@ func requestFile(filename string) error {
 	if err != nil {
 		return err
 	}
-	reader := bufio.NewReader(clientTCPCon)
-	response, err := reader.ReadString('\n')
+	buf := make([]byte, 1024)
+	n, err := clientTCPCon.Read(buf)
 	if err != nil {
 		return err
 	}
-	response = strings.TrimSpace(response)
-	fmt.Println(response)
+	response := string(buf[:n])
 	if strings.HasPrefix(response, "ERROR:") {
-		servError := strings.TrimPrefix(response, "ERROR:")
+		servError := fmt.Sprintf(strings.CutPrefix(response, "ERROR:"))
 		fmt.Println(servError)
 		return fmt.Errorf("%v", servError)
-	} else if strings.HasPrefix(response, "SIZE:") {
-		sizeStr := strings.TrimPrefix(response, "SIZE:")
-		fileSize, err := strconv.ParseInt(sizeStr, 10, 64)
-		if err != nil {
-			return fmt.Errorf("invalid file size received: %v", err)
-		}
-
-		filePath := filepath.Join(receivedFilesDir, filename)
-		for checkIfFilePathExists(filePath) {
-			filePath = filePath + "(1)"
-		}
-		fmt.Println("Saving file to:", filePath)
-		file, err := os.Create(filePath)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-
-		nCopied, err := io.CopyN(file, clientTCPCon, fileSize)
-		if err != nil {
-			return err
-		}
-		if nCopied != fileSize {
-			return fmt.Errorf("expected to copy %d bytes, but copied %d", fileSize, nCopied)
-		}
-
-		fmt.Println("File received successfully")
-		return nil
-	} else {
-		return fmt.Errorf("unexpected response from server: %s", response)
 	}
+	filePath := filepath.Join(receivedFilesDir + filename)
+	for checkIfFilePathExists(filePath) {
+		filePath = filePath + "(1)"
+	}
+	fmt.Println(filePath)
+	file, err := os.Create(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	file.Write(buf[:n])
+	_, err = io.Copy(file, clientTCPCon)
+	if err != nil {
+		os.Remove("received_" + filename)
+		return err
+	}
+	fmt.Println()
+
+	fmt.Println("File received successfully")
+	return nil
 }
 
 func readData(clientTCPCon net.Conn) (string, error) {
