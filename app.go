@@ -109,8 +109,7 @@ func (a *App) SelectFolder() (string, error) {
 }
 
 func startServer() {
-	go startUDPServer()
-	startTCPServer()
+	serverInit()
 }
 func startClient() {
 	clientInit()
