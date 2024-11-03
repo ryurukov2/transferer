@@ -37,7 +37,7 @@ function ServerLayout() {
   }, [folderPath]);
   useEffect(() => {
     getCurrentServerDir();
-  });
+  }, []);
 
   return (
     <div className="flex flex-col w-full h-full px-8">

@@ -12,13 +12,13 @@ import (
 )
 
 var messageDelim string = "\r\n"
-var logDir string = "logs/"
+var logDir string = "logs"
 
 func setLogDir() error {
 	stat, err := os.Stat(logDir)
 	// 3. file/dir doesn't exist
 	if err != nil && os.IsNotExist(err) {
-		err := os.Mkdir(logDir, 0777)
+		err := os.Mkdir(logDir+"/", 0777)
 		if err != nil {
 			return err
 		}
