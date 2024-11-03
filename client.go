@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,6 +26,7 @@ type fileData struct {
 var clientTCPCon net.Conn
 var serverAddress string
 var receivedFilesDir string
+var connMutex sync.Mutex
 
 func clientInit() {
 	serverAddrs, err := discoverServers()
@@ -172,6 +174,8 @@ func openTCPConnection(serverAddr string) (net.Conn, error) {
 }
 
 func getServerDir() (string, error) {
+	connMutex.Lock()
+	defer connMutex.Unlock()
 	if clientTCPCon == nil {
 		return "", fmt.Errorf("unable to get existing files - connection is not open, check TCP connection")
 	}
@@ -194,6 +198,8 @@ func getServerDir() (string, error) {
 }
 
 func getExistingFiles() ([]fileData, error) {
+	connMutex.Lock()
+	defer connMutex.Unlock()
 	filesObj := []fileData{}
 	if clientTCPCon == nil {
 		return filesObj, fmt.Errorf("unable to get existing files - connection is not open, check TCP connection")
