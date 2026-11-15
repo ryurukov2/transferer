@@ -2,37 +2,44 @@
 @tailwind components;
 @tailwind utilities;
 
-.btn {
-    @apply px-4 py-2 bg-gray-200 text-gray-800 font-semibold rounded-md shadow hover:bg-gray-300;
-}
-
-.btn-primary {
-    @apply bg-blue-500 text-white hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-300;
-}
-
-html {
-    background-color: rgba(27, 38, 54, 1);
-    text-align: center;
-    color: white;
-}
-
-body {
-    margin: 0;
-    color: white;
-    font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
-        "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
-        sans-serif;
-}
-
 @font-face {
     font-family: "Nunito";
     font-style: normal;
     font-weight: 400;
-    src: local(""),
-        url("assets/fonts/nunito-v16-latin-regular.woff2") format("woff2");
+    src: local(""), url("assets/fonts/nunito-v16-latin-regular.woff2") format("woff2");
 }
 
-#app {
-    height: 100vh;
-    text-align: center;
+html,
+body,
+#root {
+    height: 100%;
+}
+
+body {
+    @apply m-0 select-none bg-slate-950 text-slate-100 antialiased;
+    font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Ubuntu", "Cantarell",
+        "Helvetica Neue", sans-serif;
+}
+
+/* Allow copying paths and addresses. */
+.font-mono,
+input {
+    @apply select-text;
+}
+
+::-webkit-scrollbar {
+    width: 10px;
+}
+::-webkit-scrollbar-thumb {
+    @apply rounded-full border-2 border-solid border-transparent bg-slate-700 bg-clip-padding;
+}
+
+.toast-in {
+    animation: toast-in 160ms ease-out;
+}
+@keyframes toast-in {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
 }
