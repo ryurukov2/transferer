@@ -3,143 +3,126 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
+// App is bound to the frontend; its exported methods are callable from JavaScript.
+// Methods that return an error reject the JS promise with the error message.
 type App struct {
-	ctx context.Context
+	ctx    context.Context
+	cfg    *config
+	server *fileServer
+	client *fileClient
 }
 
 func NewApp() *App {
-	return &App{}
+	cfg := loadConfig()
+	return &App{
+		cfg:    cfg,
+		server: &fileServer{dir: cfg.sharedDir},
+		client: &fileClient{},
+	}
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	runtime.EventsOn(ctx, "start-server", func(optionalData ...interface{}) {
-		startServer()
-	})
-	runtime.EventsOn(ctx, "start-client", func(optionalData ...interface{}) {
-		startClient()
-	})
-	runtime.EventsOn(ctx, "stop-servers", func(optionalData ...interface{}) {
-		stopServers()
-	})
-}
-
-func (a *App) shutdown(ctx context.Context) {
-	stopServers()
-}
-
-func (a *App) ReqFile(filename string) string {
-	err := requestFile(filename)
-	if err != nil {
-		return fmt.Sprintf("Error requesting the file, %v", err)
+	// Emitted as "server-activity" events: {kind, client, path, size}.
+	a.server.onActivity = func(act serverActivity) {
+		runtime.EventsEmit(ctx, "server-activity", act)
 	}
-	return "File downloaded successfully."
 }
 
-func (a *App) DiscServers() []string {
+func (a *App) shutdown(ctx context.Context) { a.Stop() }
 
-	servers, err := discoverServers()
+// Stop shuts down the server and closes any client connection.
+func (a *App) Stop() {
+	a.server.stop()
+	a.client.close()
+}
+
+// ---- Server mode ----
+
+func (a *App) StartServer() error { return a.server.start() }
+
+// GetLocalAddresses returns the addresses other machines can use to reach this one.
+func (a *App) GetLocalAddresses() []string {
+	networks, err := localNetworks()
 	if err != nil {
-		fmt.Println(err)
-		return []string{}
+		return nil
 	}
-	return servers
-}
-func (a *App) SetClientConnection(connAddress string) bool {
-	serverAddress = connAddress
-	conn, err := openTCPConnection(serverAddress)
-	if err != nil {
-		fmt.Printf("Error starting client connection, %v\n", err)
-		return false
+	addrs := make([]string, len(networks))
+	for i, n := range networks {
+		addrs[i] = fmt.Sprintf("%s:%d", n.IP, tcpPort)
 	}
-	clientTCPCon = conn
-	return true
+	return addrs
 }
 
-func (a *App) GetServerDirectory() string {
-	servDir, err := getServerDir()
+func (a *App) GetSharedDir() string { return a.cfg.sharedDir() }
+
+// ListSharedFiles lists a folder inside the shared folder ("" for the shared folder itself).
+func (a *App) ListSharedFiles(rel string) ([]fileData, error) {
+	dir, err := resolveInside(a.cfg.sharedDir(), rel)
 	if err != nil {
-		fmt.Println(err)
-		return ""
+		return nil, err
 	}
-	return servDir
+	return listDir(dir)
 }
 
-func (a *App) GetFilesFromClient() []fileData {
-	files, err := getExistingFiles()
-	if err != nil {
-		fmt.Println(err)
-		return []fileData{}
-	}
-	return files
-}
+// OpenSharedDir opens the shared folder in the system file manager.
+func (a *App) OpenSharedDir() error { return openInFileManager(a.cfg.sharedDir()) }
 
-func (a *App) GetFilesFromServer(dir string) []fileData {
-	filesObj := []fileData{}
-	fileStr, err := getFiles(dir)
-	if err != nil {
-		fmt.Printf("error getting files - %v\n", err)
-		return filesObj
-	}
-	filesObj, err = parseFileStr(fileStr)
-	if err != nil {
-		fmt.Printf("error parsing files string to file data - %v\n", err)
-		return filesObj
-	}
-	return filesObj
-
-}
-
-func (a *App) GetCurrentServerDir() string {
-	return serverDir
-}
-func (a *App) SelectServerFolder() (string, error) {
-	folderPath, err := selectFolder(a, "Select a folder to share")
-	if err != nil {
+// SelectSharedDir opens a folder picker; it returns "" if the user cancels.
+func (a *App) SelectSharedDir() (string, error) {
+	dir, err := a.pickFolder("Select a folder to share", a.cfg.sharedDir())
+	if err != nil || dir == "" {
 		return "", err
 	}
-	setServerDir(folderPath)
-	return folderPath, nil
+	return dir, a.cfg.setSharedDir(dir)
 }
 
-func (a *App) SelectClientSaveFolder() (string, error) {
-	folderPath, err := selectFolder(a, "Select a folder to save files to")
-	if err != nil {
+// ---- Client mode ----
+
+func (a *App) DiscoverServers() ([]string, error) { return discoverServers(2 * time.Second) }
+
+func (a *App) Connect(addr string) error { return a.client.connect(addr) }
+
+func (a *App) GetRemoteDir() (string, error) { return a.client.remoteDir() }
+
+// ListRemoteFiles lists a folder on the server, relative to its shared folder.
+func (a *App) ListRemoteFiles(rel string) ([]fileData, error) { return a.client.listFiles(rel) }
+
+// DownloadFile saves the remote file at rel into the save folder and returns its local path.
+// Progress is emitted as "download-progress" events: {path, done, total}.
+func (a *App) DownloadFile(rel string) (string, error) {
+	return a.client.download(rel, a.cfg.saveDir(), func(done, total int64) {
+		runtime.EventsEmit(a.ctx, "download-progress", map[string]any{
+			"path": rel, "done": done, "total": total,
+		})
+	})
+}
+
+// CancelDownload aborts the download in progress, if any.
+func (a *App) CancelDownload() { a.client.cancelDownload() }
+
+func (a *App) GetSaveDir() string { return a.cfg.saveDir() }
+
+// SelectSaveDir opens a folder picker; it returns "" if the user cancels.
+func (a *App) SelectSaveDir() (string, error) {
+	dir, err := a.pickFolder("Select where to save downloads", a.cfg.saveDir())
+	if err != nil || dir == "" {
 		return "", err
 	}
-	fmt.Println(folderPath)
-	setReceivedFilesDir(folderPath)
-
-	return folderPath, nil
-}
-func startServer() {
-	serverInit()
-}
-func startClient() {
-	clientInit()
+	return dir, a.cfg.setSaveDir(dir)
 }
 
-func stopServers() {
-	if tcpListener != nil {
-		fmt.Println("Stopping TCP server...")
-		tcpListener.Close()
-		tcpListener = nil
-	}
-	if udpConn != nil {
-		fmt.Println("Stopping UDP server...")
-		udpConn.Close()
-		udpConn = nil
-	}
-	if clientTCPCon != nil {
-		fmt.Println("Closing client TCP connection...")
-		clientTCPCon.Close()
-		clientTCPCon = nil
-	}
-	if serverAddress != "" {
-		serverAddress = ""
-	}
+// OpenSaveDir opens the save folder in the system file manager.
+func (a *App) OpenSaveDir() error { return openInFileManager(a.cfg.saveDir()) }
+
+func (a *App) pickFolder(title, current string) (string, error) {
+	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:            title,
+		DefaultDirectory: current,
+	})
 }

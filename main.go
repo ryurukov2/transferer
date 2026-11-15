@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"log"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -12,26 +13,24 @@ import (
 var assets embed.FS
 
 func main() {
-	// Create an instance of the app structure
 	app := NewApp()
 
-	// Create application with options
 	err := wails.Run(&options.App{
-		Title:  "transferer",
-		Width:  1024,
-		Height: 768,
+		Title:     "Transferer",
+		Width:     1024,
+		Height:    700,
+		MinWidth:  720,
+		MinHeight: 480,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
+		// Matches the frontend's background (slate-950) to avoid a flash on startup.
+		BackgroundColour: &options.RGBA{R: 2, G: 6, B: 23, A: 255},
 		OnStartup:        app.startup,
 		OnShutdown:       app.shutdown,
-		Bind: []interface{}{
-			app,
-		},
+		Bind:             []interface{}{app},
 	})
-
 	if err != nil {
-		println("Error:", err.Error())
+		log.Fatal(err)
 	}
 }
