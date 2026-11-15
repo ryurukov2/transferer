@@ -1,97 +1,108 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
+	"sort"
 	"strings"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"sync"
 )
 
-var messageDelim string = "\r\n"
-var logDir string = "logs"
+const (
+	udpPort          = 9999
+	tcpPort          = 8888
+	discoveryMessage = "DISCOVER_FILE_SERVER"
+	discoveryReply   = "FILE_SERVER_RESPONSE:"
+	messageDelim     = "\r\n"
+)
 
-func setLogDir() error {
-	stat, err := os.Stat(logDir)
-	// 3. file/dir doesn't exist
-	if err != nil && os.IsNotExist(err) {
-		err := os.Mkdir(logDir+"/", 0777)
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-	// 2. file exists but is not dir
-	if err == nil && !stat.IsDir() {
-		logDir := logDir + "(1)"
-		setReceivedFilesDir(logDir)
-	}
-	// 4. permission error
-	if stat.IsDir() && os.IsPermission(err) {
-		logDir := logDir + "(1)"
-		setReceivedFilesDir(logDir)
-	}
-	return nil
+type fileData struct {
+	Name     string `json:"name"`
+	IsFolder bool   `json:"isFolder"`
+	Size     int64  `json:"size"`
 }
 
-// reads files from an open directory and formats them to a string, deliminated by two commas.
-// Returns "filename//isDir" for all files.
-func readFilesToStr(f *os.File) (string, error) {
-	files, err := f.Readdir(0)
+// listDir returns the visible entries of dir, folders first, then alphabetically.
+func listDir(dir string) ([]fileData, error) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		fmt.Printf("unable to read files in directory - %v\n", err)
-		return "", err
+		return nil, err
 	}
-	fileStr := ""
-	for _, file := range files {
-		fileStr += fmt.Sprintf("%v//%v,,", file.Name(), file.IsDir())
+	files := make([]fileData, 0, len(entries))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		fd := fileData{Name: e.Name(), IsFolder: e.IsDir()}
+		if info, err := e.Info(); err == nil && !e.IsDir() {
+			fd.Size = info.Size()
+		}
+		files = append(files, fd)
 	}
-	return fileStr, nil
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].IsFolder != files[j].IsFolder {
+			return files[i].IsFolder
+		}
+		return strings.ToLower(files[i].Name) < strings.ToLower(files[j].Name)
+	})
+	return files, nil
 }
 
-// Parses a string of files deliminated by two commas and returns a slice of fileData objects
-func parseFileStr(fileStr string) ([]fileData, error) {
-	filesObj := []fileData{}
-	files := strings.Split(fileStr, ",,")
-	for _, file := range files {
-		if file == "\n" {
-			break
-		}
-		fileAttrs := strings.Split(file, "//")
-		fileIsFolder, err := strconv.ParseBool(fileAttrs[1])
-		if err != nil {
-			return filesObj, fmt.Errorf("file parsing error %v", err)
-		}
-		tmpObj := fileData{Name: fileAttrs[0],
-			IsFolder: bool(fileIsFolder)}
-		filesObj = append(filesObj, tmpObj)
+var errOutsideRoot = errors.New("path is outside the shared folder")
+
+// resolveInside joins a slash-separated relative path (as sent over the wire) onto root,
+// rejecting anything that could escape it, such as "../secret" or "/etc/passwd".
+// An empty path refers to root itself.
+func resolveInside(root, rel string) (string, error) {
+	if rel == "" {
+		return root, nil
 	}
-	return filesObj, nil
+	local := filepath.FromSlash(rel)
+	if !filepath.IsLocal(local) {
+		return "", errOutsideRoot
+	}
+	return filepath.Join(root, local), nil
 }
 
-func writeLog(filename string, logdata string) {
-	fPath := filepath.Join("logs/", filename)
-	f, err := os.OpenFile(fPath,
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+// uniquePath returns a path in dir for name that doesn't exist yet,
+// turning "report.pdf" into "report (1).pdf", "report (2).pdf", ...
+func uniquePath(dir, name string) string {
+	path := filepath.Join(dir, name)
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	for i := 1; ; i++ {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return path
+		}
+		path = filepath.Join(dir, fmt.Sprintf("%s (%d)%s", base, i, ext))
+	}
+}
+
+var (
+	logMu  sync.Mutex
+	logDir = func() string {
+		if dir, err := os.UserCacheDir(); err == nil {
+			return filepath.Join(dir, "transferer", "logs")
+		}
+		return "logs"
+	}()
+)
+
+func writeLog(filename, line string) {
+	logMu.Lock()
+	defer logMu.Unlock()
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		log.Println(err)
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(logDir, filename), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		log.Println(err)
+		return
 	}
 	defer f.Close()
-
-	logger := log.New(f, "", log.LstdFlags)
-	logger.Println(logdata)
-}
-
-func selectFolder(a *App, prompt string) (string, error) {
-	folderPath, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: prompt,
-	})
-	if err != nil {
-		return "", err
-	}
-	return folderPath, nil
-
+	log.New(f, "", log.LstdFlags).Println(line)
 }

@@ -1,190 +1,194 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
+	"sync"
 )
 
-const (
-	udpPort = ":9999"
-	tcpPort = ":8888"
-)
+// fileServer answers discovery broadcasts over UDP and serves the shared folder over TCP.
+//
+// TCP protocol (one request per line, terminated by "\r\n"). Paths are slash-separated
+// and relative to the shared folder; an empty path means the shared folder itself.
+//
+//	GETDIR            -> "DIR:<absolute shared folder>\n"
+//	GETFILES:<path>   -> "FILES:<json []fileData>\n"
+//	REQUEST:<path>    -> "SIZE:<bytes>\n" followed by the raw file contents
+//
+// Any request may instead be answered with "ERROR:<message>\n".
+type fileServer struct {
+	dir func() string
+	// onActivity, if set, is called when a client connects, disconnects or downloads a file.
+	onActivity func(serverActivity)
 
-var udpConn *net.UDPConn
-var tcpListener net.Listener
-var serverDir string = "."
+	mu  sync.Mutex
+	udp *net.UDPConn
+	tcp net.Listener
+}
 
-func serverInit() {
-	go startUDPServer()
-	startTCPServer()
-	err := setLogDir()
+func (s *fileServer) start() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tcp != nil {
+		return nil
+	}
+
+	tcp, err := net.Listen("tcp", fmt.Sprintf(":%d", tcpPort))
 	if err != nil {
-		fmt.Println("Error setting log directory, logs will not be saved - ", err)
+		return fmt.Errorf("port %d is unavailable (is another server running?): %w", tcpPort, err)
+	}
+	udp, err := net.ListenUDP("udp4", &net.UDPAddr{Port: udpPort})
+	if err != nil {
+		tcp.Close()
+		return fmt.Errorf("discovery port %d is unavailable: %w", udpPort, err)
+	}
+
+	s.tcp, s.udp = tcp, udp
+	go s.serveDiscovery(udp)
+	go s.serveTCP(tcp)
+	log.Printf("server listening on tcp :%d, udp :%d", tcpPort, udpPort)
+	return nil
+}
+
+func (s *fileServer) stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tcp != nil {
+		s.tcp.Close()
+		s.tcp = nil
+	}
+	if s.udp != nil {
+		s.udp.Close()
+		s.udp = nil
 	}
 }
 
-// Starts a UDP server at port 9999 on the local machine
-func startUDPServer() {
-	addr, err := net.ResolveUDPAddr("udp4", "0.0.0.0"+udpPort)
-	if err != nil {
-		fmt.Println("Failed to resolve UDP address:", err)
-		return
-	}
-
-	conn, err := net.ListenUDP("udp4", addr)
-	if err != nil {
-		fmt.Println("Failed to listen on UDP port:", err)
-		return
-	}
-	udpConn = conn
-	defer conn.Close()
-
-	fmt.Println("UDP server listening on", udpPort)
-
+func (s *fileServer) serveDiscovery(conn *net.UDPConn) {
 	buf := make([]byte, 1024)
 	for {
-		n, clientAddr, err := conn.ReadFromUDP(buf)
+		n, addr, err := conn.ReadFromUDP(buf)
 		if err != nil {
-			fmt.Println("Error reading from UDP:", err)
-			conn.Close()
-			return
+			return // connection closed by stop()
 		}
-		message := string(buf[:n])
-		if message == "DISCOVER_FILE_SERVER" {
-			response := fmt.Sprintf("FILE_SERVER_RESPONSE:%s", tcpPort)
-			conn.WriteToUDP([]byte(response), clientAddr)
-			fmt.Println("Sent discovery response to", clientAddr)
+		if string(buf[:n]) == discoveryMessage {
+			reply := fmt.Sprintf("%s:%d", discoveryReply, tcpPort)
+			conn.WriteToUDP([]byte(reply), addr)
 		}
 	}
 }
 
-// Starts a TCP server at port 8888 on the local machine
-func startTCPServer() {
-	listener, err := net.Listen("tcp", tcpPort)
-	if err != nil {
-		fmt.Println("Failed to start TCP server:", err)
-		os.Exit(1)
-	}
-	tcpListener = listener
-	defer listener.Close()
-
-	fmt.Println("TCP server listening on", tcpPort)
-
+func (s *fileServer) serveTCP(listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Println("Error accepting TCP connection:", err)
-			return
+			return // listener closed by stop()
 		}
-		go handleTCPConnection(conn)
+		go s.handleConn(conn)
 	}
 }
 
-// Handles TCP connection for sending a file.
-func handleTCPConnection(conn net.Conn) {
+// serverActivity describes something a client did, for display in the UI.
+type serverActivity struct {
+	Kind   string `json:"kind"` // "connected", "disconnected" or "download"
+	Client string `json:"client"`
+	Path   string `json:"path,omitempty"`
+	Size   int64  `json:"size,omitempty"`
+}
+
+func (s *fileServer) report(a serverActivity) {
+	if s.onActivity != nil {
+		s.onActivity(a)
+	}
+}
+
+func (s *fileServer) handleConn(conn net.Conn) {
+	client, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
+	s.report(serverActivity{Kind: "connected", Client: client})
+	defer s.report(serverActivity{Kind: "disconnected", Client: client})
 	defer conn.Close()
-	var buffer string
-	for {
 
-		buf := make([]byte, 1024)
-		n, err := conn.Read(buf)
+	reader := bufio.NewReader(conn)
+	for {
+		line, err := reader.ReadString('\n')
 		if err != nil {
-			fmt.Println("Error reading from TCP connection:", err)
-			conn.Close()
 			return
 		}
-		buffer += string(buf[:n])
-		go writeLog("requestMessages.log", buffer)
-		fmt.Println(buffer)
-		for {
-			idx := strings.Index(buffer, "\r\n")
-			fmt.Println(idx)
-			if idx == -1 {
-				break
+		msg := strings.TrimRight(line, messageDelim)
+		writeLog("requests.log", fmt.Sprintf("%s: %s", client, msg))
+
+		cmd, arg, _ := strings.Cut(msg, ":")
+		switch cmd {
+		case "GETDIR":
+			fmt.Fprintf(conn, "DIR:%s\n", s.dir())
+		case "GETFILES":
+			s.sendFileList(conn, arg)
+		case "REQUEST":
+			if size, ok := s.sendFile(conn, arg); ok {
+				s.report(serverActivity{Kind: "download", Client: client, Path: arg, Size: size})
 			}
-
-			message := buffer[:idx]
-			buffer = buffer[idx+2:]
-
-			fmt.Println("Received message:", message)
-			handleTCPRequest(conn, message)
+		default:
+			sendError(conn, "unknown request")
 		}
 	}
 }
 
-func handleTCPRequest(conn net.Conn, message string) {
-	if strings.HasPrefix(message, "GETDIR") {
-		sendFileDir(conn)
-	} else if strings.HasPrefix(message, "GETFILES") {
-		sendExistingFiles(conn)
-	} else if strings.HasPrefix(message, "REQUEST:") {
-		filename := strings.TrimPrefix(message, "REQUEST:")
-		sendFile(conn, filename)
-	}
-}
-func sendFileDir(conn net.Conn) {
-	fmt.Println("Sending current directory - ")
-	dirStr := fmt.Sprintf("DIR:%v\n", serverDir)
-	conn.Write([]byte(dirStr))
-}
-func sendFile(conn net.Conn, filename string) {
-	fmt.Println("Client requested file:", filename)
-	filePath := filepath.Join(serverDir, "/", filename)
-	file, err := os.Open(filePath)
+func (s *fileServer) sendFileList(conn net.Conn, rel string) {
+	dir, err := resolveInside(s.dir(), rel)
 	if err != nil {
-		fmt.Println("Error opening file:", err)
-		conn.Write([]byte("ERROR: File not found"))
+		sendError(conn, err.Error())
 		return
+	}
+	files, err := listDir(dir)
+	if err != nil {
+		sendError(conn, "cannot read folder")
+		return
+	}
+	data, err := json.Marshal(files)
+	if err != nil {
+		sendError(conn, "cannot encode file list")
+		return
+	}
+	fmt.Fprintf(conn, "FILES:%s\n", data)
+}
+
+// sendFile streams the file at rel and reports whether the whole file was sent.
+func (s *fileServer) sendFile(conn net.Conn, rel string) (int64, bool) {
+	path, err := resolveInside(s.dir(), rel)
+	if err != nil || rel == "" {
+		sendError(conn, "invalid file path")
+		return 0, false
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		sendError(conn, "file not found")
+		return 0, false
 	}
 	defer file.Close()
-	fStat, err := file.Stat()
+
+	info, err := file.Stat()
 	if err != nil {
-		fmt.Println("Error getting file data:", err)
-		conn.Write([]byte("ERROR: Error getting file data"))
-		return
+		sendError(conn, "cannot read file")
+		return 0, false
 	}
-	fileSize := strconv.FormatInt(fStat.Size(), 10)
-	conn.Write([]byte("SIZE:" + fileSize + "\n"))
-	_, err = io.Copy(conn, file)
-	if err != nil {
-		fmt.Println("Error sending file:", err)
-		return
+	if info.IsDir() {
+		sendError(conn, "folders can't be downloaded yet")
+		return 0, false
 	}
-	fmt.Println("File sent successfully")
+
+	fmt.Fprintf(conn, "SIZE:%d\n", info.Size())
+	if _, err := io.Copy(conn, file); err != nil {
+		log.Printf("sending %s failed: %v", rel, err)
+		return 0, false
+	}
+	return info.Size(), true
 }
 
-func sendExistingFiles(conn net.Conn) {
-	fileStr, err := getFiles(serverDir)
-	if err != nil {
-		fmt.Printf("unable to access directory - %v\n", err)
-		return
-	}
-	_, err = conn.Write([]byte(fileStr))
-	if err != nil {
-		fmt.Printf("unable to send list of files via the TCP connection - %v", err)
-	}
-}
-
-// Returns a string with all the files in a specified directory, deliminated by two commas
-// (this is because commas are disallowed characters for file names in both windows and linux)
-func getFiles(dir string) (string, error) {
-	f, err := os.Open(dir)
-	if err != nil {
-		return "", err
-	}
-	fileStr, err := readFilesToStr(f)
-	if err != nil {
-		return "", err
-	}
-	fileStr += "\n"
-	return fileStr, nil
-}
-
-func setServerDir(dir string) {
-	serverDir = dir
+func sendError(conn net.Conn, msg string) {
+	fmt.Fprintf(conn, "ERROR:%s\n", msg)
 }

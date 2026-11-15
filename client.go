@@ -2,122 +2,272 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-const (
-	broadcastAddress = "192.168.1.255:9999"
-	discoveryMessage = "DISCOVER_FILE_SERVER"
+const requestTimeout = 10 * time.Second
+
+var (
+	errNotConnected      = errors.New("not connected to a server")
+	errDownloadCancelled = errors.New("download cancelled")
 )
 
-type fileData struct {
-	Name     string `json:"name"`
-	IsFolder bool   `json:"isFolder"`
+// fileClient holds a single TCP connection to a fileServer.
+// All requests are serialised by mu, and a single buffered reader is kept for the
+// lifetime of the connection so no response bytes are lost between requests.
+type fileClient struct {
+	mu     sync.Mutex
+	conn   net.Conn
+	reader *bufio.Reader
+
+	// cancelMu guards the fields used to abort a download from another goroutine.
+	cancelMu    sync.Mutex
+	downloading net.Conn
+	cancelled   bool
 }
 
-var clientTCPCon net.Conn
-var serverAddress string
-var receivedFilesDir string
-var connMutex sync.Mutex
-
-func clientInit() {
-	serverAddrs, err := discoverServers()
-
+func (c *fileClient) connect(addr string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closeLocked()
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
-		fmt.Println("Server discovery failed:", err)
-		return
+		return fmt.Errorf("could not connect to %s: %w", addr, err)
 	}
-	fmt.Println("Discovered servers at:", serverAddrs)
-
-	err = setReceivedFilesDir("received_files")
-	if err != nil {
-		fmt.Println("Failed to set received files directory. Files will be saved in the executable's directory.", err)
-		return
-	}
-}
-
-func setReceivedFilesDir(newDir string) error {
-
-	stat, err := os.Stat(newDir)
-	// 3. file/dir doesn't exist
-	if err != nil && os.IsNotExist(err) {
-		err := os.Mkdir(newDir, 0777)
-		if err != nil {
-			return err
-		}
-		receivedFilesDir = newDir + "/"
-		return nil
-	}
-	// 2. file exists but is not dir
-	if err == nil && !stat.IsDir() {
-		newDir := newDir + "(1)"
-		setReceivedFilesDir(newDir)
-	}
-	// 4. permission error
-	if stat.IsDir() && os.IsPermission(err) {
-		newDir := newDir + "(1)"
-		setReceivedFilesDir(newDir)
-	}
-	receivedFilesDir = newDir + "/"
+	c.conn, c.reader = conn, bufio.NewReader(conn)
 	return nil
 }
 
-// discover() returns a string with an IP:PORT format of an active UDP server if one is found
-func discover(localIP net.IP) (string, error) {
-	localAddr := net.UDPAddr{
-		IP:   localIP,
-		Port: 0,
-	}
-	conn, err := net.ListenUDP("udp4", &localAddr)
-	if err != nil {
-		return "", err
-	}
-	defer conn.Close()
-	broadcastAddr := net.UDPAddr{
-		IP:   net.IPv4(192, 168, 1, 255),
-		Port: 9999,
-	}
-	conn.SetWriteDeadline(time.Now().Add(1 * time.Second))
-	_, err = conn.WriteToUDP([]byte(discoveryMessage), &broadcastAddr)
-	if err != nil {
-		return "", err
-	}
-
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	buf := make([]byte, 1024)
-	n, addr, err := conn.ReadFromUDP(buf)
-	if err != nil {
-		return "", err
-	}
-
-	message := string(buf[:n])
-	if strings.HasPrefix(message, "FILE_SERVER_RESPONSE:") {
-		tcpPort := strings.TrimPrefix(message, "FILE_SERVER_RESPONSE:")
-		serverIP := addr.IP.String()
-		return fmt.Sprintf("%s%s", serverIP, tcpPort), nil
-	}
-	return "", fmt.Errorf("unable to locate server at IP %v", localIP)
+func (c *fileClient) close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closeLocked()
 }
 
-// getLocalIPs returns a list of local IP addresses of all available IPs for interfaces on a host.
-// This can include ethernet, wifi or other IPs that are not loopback and are up.
-func getLocalIPs() ([]net.IP, error) {
-	interfaces, err := net.Interfaces()
+func (c *fileClient) closeLocked() {
+	if c.conn != nil {
+		c.conn.Close()
+		c.conn, c.reader = nil, nil
+	}
+}
+
+// request sends cmd and returns the reply line with wantPrefix removed. Callers must hold mu.
+func (c *fileClient) request(cmd, wantPrefix string) (string, error) {
+	if c.conn == nil {
+		return "", errNotConnected
+	}
+	c.conn.SetDeadline(time.Now().Add(requestTimeout))
+	defer c.conn.SetDeadline(time.Time{})
+
+	if _, err := io.WriteString(c.conn, cmd+messageDelim); err != nil {
+		c.closeLocked()
+		return "", fmt.Errorf("connection lost: %w", err)
+	}
+	line, err := c.reader.ReadString('\n')
+	if err != nil {
+		c.closeLocked()
+		return "", fmt.Errorf("connection lost: %w", err)
+	}
+	line = strings.TrimRight(line, messageDelim)
+
+	if msg, ok := strings.CutPrefix(line, "ERROR:"); ok {
+		return "", errors.New(msg)
+	}
+	payload, ok := strings.CutPrefix(line, wantPrefix)
+	if !ok {
+		return "", fmt.Errorf("unexpected response from server: %q", line)
+	}
+	return payload, nil
+}
+
+func (c *fileClient) remoteDir() (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.request("GETDIR", "DIR:")
+}
+
+// listFiles lists the folder at rel (slash-separated, relative to the shared folder).
+func (c *fileClient) listFiles(rel string) ([]fileData, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	payload, err := c.request("GETFILES:"+rel, "FILES:")
 	if err != nil {
 		return nil, err
 	}
-	availableIPs := []net.IP{}
+	var files []fileData
+	if err := json.Unmarshal([]byte(payload), &files); err != nil {
+		return nil, fmt.Errorf("invalid file list from server: %w", err)
+	}
+	return files, nil
+}
 
-	for _, iface := range interfaces {
-		if (iface.Flags&net.FlagUp) == 0 || (iface.Flags&net.FlagLoopback) != 0 {
+// download fetches the remote file at rel into saveDir and returns the local path.
+// progress is called periodically with the number of bytes received so far.
+func (c *fileClient) download(rel, saveDir string, progress func(done, total int64)) (string, error) {
+	if rel == "" || !filepath.IsLocal(filepath.FromSlash(rel)) {
+		return "", fmt.Errorf("invalid file path %q", rel)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.cancelMu.Lock()
+	c.cancelled = false
+	c.downloading = c.conn
+	c.cancelMu.Unlock()
+	defer func() {
+		c.cancelMu.Lock()
+		c.downloading = nil
+		c.cancelMu.Unlock()
+	}()
+
+	sizeStr, err := c.request("REQUEST:"+rel, "SIZE:")
+	if err != nil {
+		return "", err
+	}
+	size, err := strconv.ParseInt(sizeStr, 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("invalid file size from server: %q", sizeStr)
+	}
+
+	dest := uniquePath(saveDir, path.Base(rel))
+	file, err := os.Create(dest)
+	if err != nil {
+		// The server is already streaming; drop the connection so it doesn't desync.
+		c.closeLocked()
+		return "", err
+	}
+	defer file.Close()
+
+	pw := &progressWriter{w: file, total: size, report: progress}
+	if _, err := io.CopyN(pw, c.reader, size); err != nil {
+		file.Close()
+		os.Remove(dest)
+		c.closeLocked()
+		if c.wasCancelled() {
+			return "", errDownloadCancelled
+		}
+		return "", fmt.Errorf("transfer interrupted: %w", err)
+	}
+	progress(size, size)
+	return dest, nil
+}
+
+// cancelDownload aborts an in-progress download by closing its connection.
+// It deliberately doesn't take mu, which the download is holding.
+func (c *fileClient) cancelDownload() {
+	c.cancelMu.Lock()
+	defer c.cancelMu.Unlock()
+	if c.downloading != nil {
+		c.cancelled = true
+		c.downloading.Close()
+	}
+}
+
+func (c *fileClient) wasCancelled() bool {
+	c.cancelMu.Lock()
+	defer c.cancelMu.Unlock()
+	return c.cancelled
+}
+
+// progressWriter forwards writes and reports progress at most every 100ms.
+type progressWriter struct {
+	w           io.Writer
+	done, total int64
+	last        time.Time
+	report      func(done, total int64)
+}
+
+func (p *progressWriter) Write(b []byte) (int, error) {
+	n, err := p.w.Write(b)
+	p.done += int64(n)
+	if now := time.Now(); now.Sub(p.last) > 100*time.Millisecond {
+		p.last = now
+		p.report(p.done, p.total)
+	}
+	return n, err
+}
+
+// discoverServers broadcasts on every active IPv4 network in parallel and
+// returns the sorted, de-duplicated "ip:port" addresses of servers that replied.
+func discoverServers(timeout time.Duration) ([]string, error) {
+	networks, err := localNetworks()
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		mu    sync.Mutex
+		wg    sync.WaitGroup
+		found = map[string]bool{}
+	)
+	for _, n := range networks {
+		wg.Add(1)
+		go func(n *net.IPNet) {
+			defer wg.Done()
+			for _, addr := range discoverOn(n, timeout) {
+				mu.Lock()
+				found[addr] = true
+				mu.Unlock()
+			}
+		}(n)
+	}
+	wg.Wait()
+
+	servers := make([]string, 0, len(found))
+	for addr := range found {
+		servers = append(servers, addr)
+	}
+	sort.Strings(servers)
+	return servers, nil
+}
+
+// discoverOn sends a discovery broadcast on network n and collects every reply until timeout.
+func discoverOn(n *net.IPNet, timeout time.Duration) []string {
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: n.IP})
+	if err != nil {
+		return nil
+	}
+	defer conn.Close()
+
+	if _, err := conn.WriteToUDP([]byte(discoveryMessage), &net.UDPAddr{IP: broadcastAddr(n), Port: udpPort}); err != nil {
+		return nil
+	}
+
+	conn.SetReadDeadline(time.Now().Add(timeout))
+	var servers []string
+	buf := make([]byte, 1024)
+	for {
+		size, addr, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			return servers // deadline reached
+		}
+		if port, ok := strings.CutPrefix(string(buf[:size]), discoveryReply); ok {
+			servers = append(servers, addr.IP.String()+port)
+		}
+	}
+}
+
+// localNetworks returns the IPv4 networks of all interfaces that are up and not loopback.
+func localNetworks() ([]*net.IPNet, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	var networks []*net.IPNet
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
 		}
 		addrs, err := iface.Addrs()
@@ -125,179 +275,18 @@ func getLocalIPs() ([]net.IP, error) {
 			continue
 		}
 		for _, addr := range addrs {
-			var ip net.IP
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
+			if ipNet, ok := addr.(*net.IPNet); ok && ipNet.IP.To4() != nil {
+				networks = append(networks, &net.IPNet{IP: ipNet.IP.To4(), Mask: ipNet.Mask[len(ipNet.Mask)-4:]})
 			}
-			if ip == nil || ip.IsLoopback() {
-				continue
-			}
-			ip = ip.To4()
-			if ip == nil {
-				continue // Not an IPv4 address
-			}
-			availableIPs = append(availableIPs, ip)
 		}
 	}
-
-	return availableIPs, nil
+	return networks, nil
 }
 
-// discoverServers loops through available IP addresses of interfaces on the host and looks for available UDP servers through each IP.
-// This is needed because on some computers with more than one interface, inactive interfaces can return 'up' flags similar to active ones.
-func discoverServers() ([]string, error) {
-	availableServers := []string{}
-	localIPs, err := getLocalIPs()
-	if err != nil {
-		return availableServers, err
+func broadcastAddr(n *net.IPNet) net.IP {
+	ip := make(net.IP, 4)
+	for i := range ip {
+		ip[i] = n.IP[i] | ^n.Mask[i]
 	}
-	for _, localIP := range localIPs {
-		discoveredServer, err := discover(localIP)
-		if err != nil {
-			fmt.Printf("Error discovering server on %v - %v\n", localIP, err)
-			continue
-		}
-		availableServers = append(availableServers, discoveredServer)
-	}
-	return availableServers, nil
-}
-
-func openTCPConnection(serverAddr string) (net.Conn, error) {
-	conn, err := net.Dial("tcp", serverAddr)
-	if err != nil {
-		return nil, err
-	}
-	return conn, nil
-}
-
-func getServerDir() (string, error) {
-	connMutex.Lock()
-	defer connMutex.Unlock()
-	if clientTCPCon == nil {
-		return "", fmt.Errorf("unable to get existing files - connection is not open, check TCP connection")
-	}
-	message := "GETDIR" + messageDelim
-	_, err := clientTCPCon.Write([]byte(message))
-	if err != nil {
-		return "", err
-	}
-	fmt.Println("Sent GETDIR message")
-	resp, err := readData(clientTCPCon)
-	if err != nil {
-		return "", err
-	}
-	fmt.Println("Received GETDIR response")
-	fmt.Println(resp)
-
-	resp = strings.TrimPrefix(resp, "DIR:")
-
-	return resp, nil
-}
-
-func getExistingFiles() ([]fileData, error) {
-	connMutex.Lock()
-	defer connMutex.Unlock()
-	filesObj := []fileData{}
-	if clientTCPCon == nil {
-		return filesObj, fmt.Errorf("unable to get existing files - connection is not open, check TCP connection")
-	}
-	message := "GETFILES" + messageDelim
-	_, err := clientTCPCon.Write([]byte(message))
-	if err != nil {
-		return filesObj, err
-	}
-	fmt.Println("Sent GETFILES message")
-	temp, err := readData(clientTCPCon)
-	if err != nil {
-		return filesObj, err
-	}
-	fmt.Println("Received GETFILES response")
-	fmt.Println("Files: ", temp)
-	filesObj, err = parseFileStr(temp)
-	if err != nil {
-		return filesObj, err
-	}
-	return filesObj, nil
-}
-
-func checkIfFilePathExists(filePath string) bool {
-	_, err := os.Stat(filePath)
-	if err != nil {
-		return !os.IsNotExist(err)
-	}
-	return true
-}
-
-func requestFile(filename string) error {
-	if clientTCPCon == nil {
-		return fmt.Errorf("unable to request file - connection is not open, check TCP connection")
-	}
-	message := "REQUEST:" + filename + messageDelim
-	_, err := clientTCPCon.Write([]byte(message))
-	if err != nil {
-		return err
-	}
-	reader := bufio.NewReader(clientTCPCon)
-	response, err := reader.ReadString('\n')
-	if err != nil {
-		return err
-	}
-	response = strings.TrimSpace(response)
-	fmt.Println(response)
-	if strings.HasPrefix(response, "ERROR:") {
-		servError := strings.TrimPrefix(response, "ERROR:")
-		fmt.Println(servError)
-		return fmt.Errorf("%v", servError)
-	} else if strings.HasPrefix(response, "SIZE:") {
-		sizeStr := strings.TrimPrefix(response, "SIZE:")
-		fileSize, err := strconv.ParseInt(sizeStr, 10, 64)
-		if err != nil {
-			return fmt.Errorf("invalid file size received: %v", err)
-		}
-
-		filePath := filepath.Join(receivedFilesDir, filename)
-		for checkIfFilePathExists(filePath) {
-			filePath = filePath + "(1)"
-		}
-		fmt.Println("Saving file to:", filePath)
-		file, err := os.Create(filePath)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-
-		nCopied, err := io.CopyN(file, clientTCPCon, fileSize)
-		if err != nil {
-			return err
-		}
-		if nCopied != fileSize {
-			return fmt.Errorf("expected to copy %d bytes, but copied %d", fileSize, nCopied)
-		}
-
-		fmt.Println("File received successfully")
-		return nil
-	} else {
-		return fmt.Errorf("unexpected response from server: %s", response)
-	}
-}
-
-func readData(clientTCPCon net.Conn) (string, error) {
-	reader := bufio.NewReader(clientTCPCon)
-	var result string
-
-	for {
-		chunk, err := reader.ReadString('\n')
-		if err != nil {
-			return "", err
-		}
-		result += chunk
-
-		if len(chunk) > 0 && chunk[len(chunk)-1] == '\n' {
-			break
-		}
-	}
-	return result, nil
+	return ip
 }
